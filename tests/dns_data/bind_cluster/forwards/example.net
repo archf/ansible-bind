@@ -1,0 +1,30 @@
+; Zone file for example.net.
+;$ORIGIN example.net.
+
+$TTL 900
+
+@ IN SOA master1.example.net. hostmaster.example.net. (
+		20150829
+		1D
+		1H
+		1W
+		1D
+		)
+
+; NS
+												IN  NS ns1.example.net.
+												IN  NS ns2.example.net.
+ns1											IN	A		192.168.56.54
+ns2											IN	A		192.168.56.55
+
+; MX
+
+; Records (A, AAAA, CNAME...)
+
+; test a record
+machine1                 IN A           192.168.56.70
+host1cname               IN CNAME       machine1.example.net.
+
+; test another record
+machine1                 IN A           192.168.56.70
+host2cname               IN CNAME       machine2.example.net.

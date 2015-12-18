@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  author: Felix Archambault
+  description: Configure a multi-machine BIND cluster for multiple domains
+  license: BSD
+  min_ansible_version: 1.7
+  platforms:
+  - name: EL
+    versions:
+      - 6
+      - 7
+  categories:
+    - networking
+dependencies: []

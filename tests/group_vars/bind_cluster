@@ -1,0 +1,112 @@
+# default is not to run bind and a chroot and make use of selinux as
+# recommended in the bind documentation
+
+# bind_chroot: true
+# bind_service: named-chroot
+
+# 'masters' and 'slaves' special acl will be use to populate the:
+# address match-list used by
+#   - slave zones in their masters clause
+#   - master zones in their also-notify clause
+#   - the dns acl wich is specific to this setup
+# note: not currently used for the 'also-notify' use case
+
+# acl that defines the bind cluster
+# bind_groups var content will populate a 'masters' and  'slaves' acl
+bind_groups:
+  - type: master
+    ips:
+      - 192.168.56.53
+  - type: slave
+    ips:
+      - 192.168.56.54
+      - 192.168.56.55
+      - 192.168.67
+      - 192.168.68
+
+bind_group_acls:
+  - name: outofclusterhost
+    ips:
+      - 10.23.128.10
+
+bind_masters_acls:
+  - name: lan
+    ips:
+      - 172.16.0.0/16
+
+bind_slaves_acls:
+  - name: anotherlan
+    ips:
+      - 10.0.0.0/8
+
+# bind options
+bind_options_directory: '/var/named'
+
+# cache options
+bind_options_max_cache_ttl: 7200
+bind_options_max_ncache_ttl: 3600
+bind_options_max_cache_size: '384m'
+bind_options_tcp_clients: 50
+
+# logging options
+bind_logging:
+  channels:
+    - name: normal
+      file: "logs/warnings.logs"
+      versions: 7
+      size: 20M
+      print_category: yes
+      print_severity: yes
+      print_time: yes
+      severity: warning
+    - name: all
+      file: "logs/info.logs"
+      versions: 7
+      size: 20M
+      print_category: yes
+      print_severity: yes
+      print_time: yes
+      severity: info
+    - name: queries
+      file: "logs/queries.logs"
+      versions: 7
+      size: 20M
+      print_category: yes
+      print_severity: yes
+      print_time: yes
+      severity: info
+  categories:
+    - name: default
+      channels:
+        - normal
+        - all
+        - queries
+
+  # a single view will result in no views at all
+  # bind _default view will be used and irrevelant variables such as the
+  # name or match-client will be ignore
+  # the last view is the view of last resort, use it with
+  # match-clients { any; }; to implement a default behavior
+bind_views:
+  - name: default
+    # allow_query:
+    #   - '192.168.56.0/24'
+    #   - someotherdns
+    forwards:
+      - zone: 'example.com'
+        comment: example zone
+      - zone: 'example.org'
+        comment: another example zone
+      - zone: 'example.net'
+        comment: 'a slave only master zone'
+        target: slave
+        type: master
+        allow_transfer:
+          - outofclusterhost
+        allow_query:
+          - outofclusterhost
+    # create an empty var if you have no content
+    reverses: []
+    #     # ip in network must be quoted for filter_plugin to work
+    #   - network: '192.168'
+    #   - network: '10.25'

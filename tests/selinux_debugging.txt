@@ -1,0 +1,38 @@
+With this extra security comes some restrictions: By default, the SELinux
+policy does not allow named to write any master zone database files. Only the
+root user may create files in the $ROOTDIR/var/named zone database file
+directory (the options { "directory" } option), where $ROOTDIR is set in
+/etc/sysconfig/named.
+
+The "named" group must be granted read privelege to these files in order for
+named to be enabled to read them. Any file created in the zone database file
+directory is automatically assigned the SELinux file context named_zone_t .
+
+By default, SELinux prevents any role from modifying named_zone_t files; this
+means that files in the zone database directory cannot be modified by dynamic
+DNS (DDNS) updates or zone transfers.
+
+The Red Hat BIND distribution and SELinux policy creates two directories where
+named is allowed to create and modify files:
+
+$ROOTDIR/var/named/slaves $ROOTDIR/var/named/data.
+
+By placing files you want named to modify, such as slave or DDNS updateable
+zone files and database / statistics dump files in these directories, named
+will work normally and no further operator action is required. Files in these
+directories are automatically assigned the ’named_cache_t’ file context, which
+SELinux allows named to write.
+
+You can enable the named_t domain to write and create named_zone_t files by use
+of the SELinux tunable boolean variable "named_write_master_zones", using the
+setsebool(8) command or the system-config- security GUI . If you do this, you
+must also set the ENABLE_ZONE_WRITE variable in /etc/sysconfig/named to 1 / yes
+to set the ownership of files in the $ROOTDIR/var/named directory to
+named:named in order for named to be allowed to write them.
+
+# selinux lookup commands
+
+getsebool -a | grep named named_tcp_bind_http_port --> off
+named_write_master_zones --> off
+
+sudo ausearch -m avc -ts recent | audit2allow -w

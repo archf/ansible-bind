@@ -1,0 +1,67 @@
+; global named.soa file to be inclued by multiple zones.
+
+$TTL {{ item.ttl|default('3600') }}
+
+{# SOA  RR #}
+{% if bind_zones_mname is not defined %}
+@ IN	SOA {{ ansible_hostname }}.{{ bind_zones_origin }}. {{ bind_zones_email }}.{{ bind_zones_origin }}. (
+{% else %}
+@ IN	SOA {{ mname }} {{ bind_zone_hostmaster_email }}.{{ item.origin }}. (
+{% endif %}
+
+  {{ bind_zone_serial }}  ;; Serial (AAAAMMJJ##)
+  {{ bind_zones_refresh }}  ;; Refresh
+	{{ bind_zones_retry }}    ;; Retry
+	{{ bind_zones_expire }}   ;; Expire
+	{{ bind_zones_minimum }}   ;; Minimum
+	)
+
+{# NS #}
+; NS
+{% if item.ns is defined and item.mname is defined %}
+{% for nameserver in item.ns %}
+			IN  NS		{{ ansible_hostname }}.{{ bind_zones_origin }}.
+{% endfor %}
+{# if zone ns are not defined, default to the slave IP//FQDN #}
+{% elif item.ns|none %}
+
+{% endif %}
+
+{# MX #}
+; MX
+{#
+{% if item.mx is defined %}
+{% for mxchange in item.mx %}
+								 IN  MX		{{ mail.preference}}	{{ mail.name }}.{{ origin }}.
+{% endfor %}
+{% endif %}
+#}
+
+{# Records (A, AAAA, CNAME...) #}
+; Records (A, AAAA, CNAME...)
+
+{% if item.records is defined %}
+{% for rr in item.records %}
+{% if rr.comment is defined %}
+; {{ rr.comment }}
+{% endif %}
+{# NS RR for zone delegation #}
+{% if rr.ns is defined %}
+{{ rr.name.ljust(24) }} IN NS		{{ rr.ns }}
+{% endif %}
+{% if rr.v4 is defined %}
+{{ rr.name.ljust(24) }} IN A		{{ rr.v4 }}
+{% endif %}
+{# ipv6 RR #}
+{% if rr.v6 is defined and ! rr.v6|none %}
+{{ rr.name.ljust(24) }} IN AAAA {{ rr.v6 }}
+{% endif %}
+{# cname #}
+{% if rr.cname is defined %}
+{{ rr.cname.ljust(24) }} IN CNAME	{{ rr.cname }}.{{ item.origin }}.
+{# {{ rr.cname|replace('vl-', '').ljust(24) }} IN CNAME {{ rr.cname }}.{{
+item.origin }}. #}
+{% endif %}
+
+{% endfor %}
+{% endif %}

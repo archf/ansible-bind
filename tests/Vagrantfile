@@ -1,0 +1,65 @@
+# vi: set ft=ruby
+
+require 'rbconfig'
+
+VAGRANTFILE_API_VERSION = '2'
+
+ROLE_NAME = 'bind'
+
+hosts = [
+  { name: 'm1', ip: '192.168.56.53', net: 'private_network' },
+  { name: 'm2', ip: '192.168.56.54' , net: 'private_network' },
+  { name: 'm3', ip: '192.168.56.55' , net: 'private_network' },
+]
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+
+  # global settings
+  # config.vm.box = "frensjan/centos-7-64-lxc"
+  # config.vm.provider = "lxc"
+  # config.vm.provider :lxc do |vm|
+    # vm.customize 'network.link', 'virbr0'
+    # lxc.sudo_wrapper = '/usr/local/bin/vagrant-lxc-wrapper'
+  # end
+#
+  config.vm.box = "bento/centos-7.1"
+
+  if Vagrant.has_plugin?("vagrant-hostmanager")
+    config.hostmanager.enabled = true     # hook to Vagrant up and vagrant destroy
+    config.hostmanager.manage_host = true # allow /etc/hosts file updating
+    config.hostmanager.ignore_private_ip = false # disable using the private network IP address
+    config.hostmanager.include_offline = true # include box that are up or boxes with private IP
+  end
+
+  # config loop to bring up all the machines and provision only once they are
+  N=hosts.length
+
+  (1..N).each do |machine_id|
+
+    config.vm.define "bind-m#{machine_id}" do |node|
+      node.vm.hostname = ROLE_NAME + '-' + hosts[machine_id - 1][:name]
+      node.vm.network hosts[machine_id -1 ][:net], ip: hosts[machine_id - 1][:ip]
+    #   # node.vm.network hosts[machine_id][:net], ip: hosts[machine_id][:ip], lxc__bridge_name: 'virbr0'
+
+      if machine_id == N
+        # provisionnning loop
+        node.vm.provision 'ansible' do |ansible|
+
+          # create ansible groups to apply group_vars and host_vars
+          ansible.groups = {
+            "bindmasters" => [ROLE_NAME + '-' + hosts[0][:name]],
+            "bindslaves" => [ROLE_NAME + '-' + hosts[1][:name], ROLE_NAME + '-' + hosts[2][:name]],
+            "bind_cluster:children" => ["bindmasters","bindslaves"]
+          }
+
+          # run the provisionner
+          ansible.verbose = 'v'
+          ansible.limit = 'all'
+          ansible.playbook = 'test.yml'         # Elaborate test that shows all features
+        end #ansible vm.provision
+
+      end # machine_id if node.vm
+
+    end
+  end # each loop
+end #vagrant.configure

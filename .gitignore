@@ -1,0 +1,3 @@
+# Hidden Vagrant-directory
+tests/.vagrant/*
+filter_plugins/*.pyc

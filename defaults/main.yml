@@ -1,0 +1,34 @@
+# roles/bind/defaults/main.yml
+---
+
+bind_packages:
+  - bind.x86_64
+  - bind-utils.x86_64
+
+# do not update bind to latest unless explictly stated
+bind_pkg_state: installed
+
+# bind is not installed in a chroot and selinux is used as recommendend
+# force to true if needed
+bind_chroot: false
+bind_service: named
+
+# recursion is turned off
+bind_options_recursion: no
+
+# default logging channel provided in package
+bind_logging_channels:
+  - channel_name: default_debug
+    file: 'data/named.run'
+    severity: dynamic
+
+# root path where zones are stored on control machine
+bind_data_root: "{{ playbook_dir }}/dns_data"
+
+# SOA information
+bind_zone_hostmaster_email: "hostmaster"
+bind_zone_ttl: "1W"
+bind_zone_time_to_refresh: "1D"
+bind_zone_time_to_retry: "1H"
+bind_zone_time_to_expire: "1W"
+bind_zone_minimum_ttl: "1D"

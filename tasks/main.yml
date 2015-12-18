@@ -1,0 +1,207 @@
+# roles/bind/tasks/main.yml
+---
+
+- name: install bind packages
+  yum:
+    name: "{{ item }}"
+    state: "{{ bind_pkg_state }}"
+  with_items: bind_packages
+
+- name: install bind-chroot packages on rhel or centos machines
+  yum:
+    name: bind-chroot
+    state: "{{ bind_pkg_state }}"
+  when: ansible_os_family == "Redhat" and bind_chroot
+
+- name: create serial to update zones
+  command: date +%y%m%d%S
+  register: bind_zones_serial
+
+# - name: make sure selinux is enabled
+#   selinux: state=disabled
+#   # when: not bind_chroot
+#    selinux: state=enforcing policy=targeted
+
+# guess facts based on ip address configured on host
+- name: set bind_listen_on_ipv4 and bind_dns_type from machine IP address
+  set_fact:
+    bind_listen_on_ipv4: "{{ item.1 }}"
+    bind_dns_type: "{{ item.0.type }}"
+  with_subelements:
+    - bind_groups
+    - ips
+  when: item.1 in ansible_all_ipv4_addresses
+
+- name: create bind directory structure (forward, reverse and slave dir...)
+  file:
+    path: "{{ bind_options_directory }}/{{ item.dir }}"
+    owner: named
+    group: named
+    mode: '0760'
+    setype: "{{ item.policy }}"
+    state: directory
+  with_items:
+    - { dir: 'forwards', policy: 'named_zone_t' }
+    - { dir: 'reverses', policy: 'named_zone_t' }
+    - { dir: 'logs', policy: 'named_log_t' }
+    - { dir: 'slaves', policy: 'named_cache_t' }
+
+- name: check if bind is running (systemctl is-active named)
+  command: systemctl is-active named
+  register: bind_status
+  always_run: true
+  ignore_errors: true
+
+# - name: configure rndc using automatic configuration (rndc-confgen -a)
+#   command: rndc-confgen -a -u named
+#   when: bind_status.stdout != "active"
+
+  # # this is necessary to ensure the selinux type is right
+  # # if they do not exist, bind will create them though
+# - name: touch the log files
+  # file:
+  #   path: "{{ bind_options_directory }}/{{ item.file }}"
+  #   owner: named
+  #   group: named
+  #   mode: '0640'
+  #   setype: named_zone_t
+  #   state: touch
+  # with_items: bind_logging_channels
+
+# local sanity check of all forward zonefiles
+- name: validate all forward zones locally
+  command: named-checkzone -w {{ bind_data_root }}/{{ group_names[0] }} {{ item.1.zone }} {{ bind_data_root }}/{{ group_names[0] }}/forwards/{{ item.1.zone }}
+  with_subelements:
+    - bind_views
+    - forwards
+  when:  (bind_dns_type != 'slave' and item.1.type is undefined ) or (item.1.type is defined and item.1.type != 'slave' and item.1.type != 'forward')
+  delegate_to: localhost
+  run_once: true
+
+# local sanity check of all reverse zonefiles
+- name: validate all reverse zones locally
+  command: named-checkzone -w {{ bind_data_root }}/{{ group_names[0] }} {{ item.1.network|reverse_lookup_zone }} {{ bind_data_root }}/{{ group_names[0] }}/reverses/{{ item.1.network|reverse_lookup_zone }}
+  with_subelements:
+    - bind_views
+    - reverses
+  when: reverses is defined and ((bind_dns_type != 'slave' and item.1.type is undefined ) or (item.1.type is defined and item.1.type != 'slave' and item.1.type != 'forward'))
+  delegate_to: localhost
+  run_once: true
+
+- name: register local forwards directories containing zonefile RR
+  command: find {{ bind_data_root}}/{{ group_names[0] }}/forwards/ -mindepth 1 -maxdepth 1 -type d
+  register: bind_forward_zonedirs
+  delegate_to: localhost
+  run_once: true
+  always_run: true
+
+- name: register local reverses directories containing zonefile RR
+  command: find {{ bind_data_root}}/{{ group_names[0] }}/reverses/ -mindepth 1 -maxdepth 1 -type d
+  register: bind_reverses_zonedirs
+  delegate_to: localhost
+  run_once: true
+  always_run: true
+
+# *.soa files are copied to all nodes, but only authoritative zones that
+# included it will make use of it.
+- name: copy shared .soa files to named running directory if they exist
+  copy:
+    src: "{{ item }}"
+    dest: "{{ bind_options_directory|default('/var/named/') }}"
+    owner: named
+    group: named
+    mode: "0640"
+    setype: named_zone_t
+    validate: "named-checkzone {{ item }} %s"
+  with_fileglob:
+    - "{{ bind_data_root }}/{{ group_names[0] }}/*.soa"
+  notify: reload bind
+
+  # only for a master node, do not rely on file inclusion on non-master node
+- name: copy all forward directories (where included zonefiles live)
+  copy:
+    src: "{{ item }}"
+    dest: "{{ bind_options_directory }}/forwards/"
+    directory_mode: "0770"
+    owner: named
+    group: named
+    mode: "0640"
+    setype: named_zone_t
+  with_items: bind_forward_zonedirs.stdout_lines
+  when: bind_dns_type != 'slave'
+
+- name: copy forward zonefiles (when node is authoritative on zone)
+  copy:
+    src: "{{ bind_data_root }}/{{ group_names[0] }}/forwards/{{ item.1.zone }}"
+    dest: "{{ bind_options_directory }}/forwards/{{ item.1.zone }}"
+    owner: named
+    group: named
+    mode: "0640"
+    setype: named_zone_t
+  with_subelements:
+    - bind_views
+    - forwards
+  when:  (bind_dns_type != 'slave' and item.1.type is undefined ) or (item.1.type is defined and item.1.type != 'slave' and item.1.type != 'forward')
+  notify: reload bind
+
+# todo: generate reverse zone dynamically and on CM from forward zonefiles
+
+# only for a master node, do not rely on file inclusion on non-master node
+- name: copy all reverses directories (where included zonefiles live)
+  copy:
+    src: "{{ item }}"
+    dest: "{{ bind_options_directory }}/reverses/"
+    directory_mode: "0770"
+    owner: named
+    group: named
+    mode: "0640"
+    setype: named_zone_t
+  with_items: bind_reverses_zonedirs.stdout_lines
+  when: bind_dns_type != 'slave'
+
+# reverse zones are copied for now
+- name: copy reverse zone files (when node is authoritative on zone)
+  copy:
+    src: "{{ bind_data_root }}/{{ group_names[0] }}/reverses/{{ item.1.network|reverse_lookup_zone }}"
+    dest: "{{ bind_options_directory }}/reverses/{{ item.1.network|reverse_lookup_zone }}"
+    owner: named
+    group: named
+    mode: "0640"
+    setype: named_zone_t
+  with_subelements:
+    - bind_views
+    - reverses
+  when:  (bind_dns_type != 'slave' and item.1.type is undefined ) or (item.1.type is defined and item.1.type != 'slave' and item.1.type != 'forward')
+  notify: reload bind
+
+# # at the end to have validation working with all zones update
+# - name: template named.soa on each bind cluster members
+#   template:
+#     src: named.soa.j2
+#     dest: /var/named/named.soa
+#     owner: root
+#     group: named
+#     mode: '0640'
+#     backup: yes
+#     setype: named_conf_t
+#     # validate: 'named-checkconf -z %s'
+#   notify: reload bind
+
+# at the end to have validation working with all zones update
+- name: template named.conf on each bind cluster members
+  template:
+    src: named.conf.j2
+    dest: /etc/named.conf
+    owner: root
+    group: named
+    mode: '0640'
+    backup: yes
+    setype: named_conf_t
+    # validate: 'named-checkconf -z %s'
+  notify: reload bind
+
+# this ensure the bind service is started so that the bind reload doesn't
+# fail on the first reload.
+- name: start bind if not already started (to avoid issues with the reload handler)
+  service: name=named state=started enabled=yes
+  when: bind_status.stdout != "active"

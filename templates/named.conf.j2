@@ -1,0 +1,387 @@
+//
+// named.conf
+//
+
+/*****************************
+	acl
+*****************************/
+
+{#	acl for of the masters + slaves listen-on IP #}
+{% for grp in bind_groups %}
+{% if grp.type != bind_dns_type %}
+acl {{ grp.type }}s {
+{% for ip in grp.ips %}
+	{{ ip }};
+{% endfor %}
+	};
+{% endif %}
+
+{% endfor %}
+{# insert acls shared across the whole cluster if they do exist #}
+{% if  bind_group_acls is defined %}
+{% for acl in bind_group_acls %}
+acl {{ acl.name }} {
+{% for ip in acl.ips %}
+	{{ ip }};
+{% endfor %}
+	};
+
+{% endfor %}
+{% endif %}
+{# insert master dns specific acls if they do exist #}
+{% if  bind_masters_acls is defined %}
+{% for acl in bind_masters_acls %}
+acl {{ acl.name }} {
+{% for ip in acl.ips %}
+	{{ ip }};
+{% endfor %}
+	};
+
+{% endfor %}
+{% endif %}
+{# insert slaves dns specific acls if they do exist #}
+{% if  bind_slaves_acls is defined %}
+{% for acl in bind_slaves_acls %}
+acl {{ acl.name }} {
+{% for ip in acl.ips %}
+	{{ ip }};
+{% endfor %}
+	};
+
+{% endfor %}
+{% endif %}
+
+{# fixme: use an acl instead of joining ips? #}
+{% for grp in bind_groups %}
+{% if grp.type == 'master' %}
+/*
+	address match-list used by
+		- slave zones in their masters clause
+		- master zones in their also-notify clause
+*/
+masters master-ips { {{ grp.ips|join(';') }}; };
+{% endif %}
+{% endfor %}
+
+/*****************************
+	begin-options
+*****************************/
+options {
+
+	// listen
+	listen-on port 53 { {{ bind_listen_on_ipv4|default('any') }};localhost; };
+	listen-on-v6 port 53 { {{ bind_listen_on_ipv6|default('any') }};localhost; };
+
+	// filepaths
+	directory "{{ bind_options_directory|default('/var/named') }}";
+	dump-file "data/cache_dump.db";
+	statistics-file "data/named_stats";
+	memstatistics-file "data/named_mem_stats";
+
+	pid-file "/run/named/named.pid";
+
+{# allow-query #}
+{% if bind_options_allow_query is defined and bind_options_allow_query == none %}
+	allow-query { none; };
+{% elif bind_options_allow_query is defined and bind_dns_type == 'master' and bind_options_allow_query != none %}
+	allow-query { {{ bind_options_allow_query|join(';') }};slaves;localhost; };
+{% else %}
+	allow-query { {{ bind_options_allow_query|join(';') }};localhost; };
+{% endif %}
+{# allow-transfer #}
+{% if bind_options_allow_transfer is defined and bind_options_allow_transfer == none %}
+	allow-transfer { none; };
+{% elif bind_options_allow_transfer is defined and bind_dns_type == 'master' and bind_options_allow_transfer != none %}
+	allow-transfer { {{ bind_options_allow_transfer|join(';') }};slaves;localhost; };
+{% else %}
+	allow-transfer { {{ bind_options_allow_transfer|join(';') }};localhost; };
+{% endif %}
+{# allow-update #}
+{% if bind_options_allow_update is defined and bind_options_allow_update == none %}
+	allow-update { none; };
+{% elif bind_options_allow_update is defined and bind_options_allow_update != none %}
+	allow-update { {{ bind_options_allow_update|join(';') }}; };
+{% endif %}
+
+{% if bind_options_max_cache_ttl is defined %}
+	max-cache-ttl  {{ bind_options_max_cache_ttl }};
+{% endif %}
+{% if bind_options_max_ncache_ttl is defined %}
+	max-ncache-ttl {{ bind_options_max_ncache_ttl }};
+{% endif %}
+{% if bind_options_max_cache_size is defined %}
+	max-cache-size {{ bind_options_max_cache_size }};
+{% endif %}
+
+{% if bind_options_tcp_clients is defined %}
+	// tcp clients on tcp port 53. Bind 9 default is 100.
+	tcp-clients {{ bind_options_tcp_clients }};
+{% endif %}
+
+	// recursion settings for _default view
+{# never recurse unless explicitly specified #}
+	recursion {{ bind_options_recursion|default('no') }};
+{% if  bind_options_recursion != 'no' and bind_options_allow_recursion is defined %}
+	allow-recursion { {{ bind_options_allow_recursion|join(';') }};localhost; };
+{% endif %}
+{% if bind_options_recursion != 'no' and bind_options_recursive_clients is defined %}
+	recursive-clients {{ bind_options_recursive_clients }};
+{% endif %}
+
+{#
+	// dnssec settings
+	dnssec-enable yes;
+	dnssec-validation yes;
+	dnssec-lookaside auto;
+
+	/* Path to ISC DLV key */
+	bindkeys-file "/etc/named.iscdlv.key";
+#}
+	managed-keys-directory "dynamic";
+	session-keyfile "/run/named/session.key";
+}; // end options
+
+/*****************************
+	logging
+*****************************/
+logging {
+{% for channel in bind_logging.channels %}
+	Channel {{ channel.name }} {
+{% for key,value in channel|dictsort %}
+{% if key|lower != "name" and key|lower != "file" and key|lower != 'versions' and key|lower != 'size' %}
+		{{ key|replace('_', '-') }} {{ value }};
+{% endif %}
+{% if key|lower == "file" %}
+		{{key}} "{{ value }}" versions {{ channel.version|default('7') }} size {{ channel.size|default('20M') }};
+{% endif %}
+{% endfor %}
+	};
+
+{% endfor %}
+
+{% for category in bind_logging.categories %}
+	category {{ category.name }} {
+{% for channel in category.channels %}
+		{{ channel }};
+{% endfor %} {# end of category.channels loop #}
+		};
+
+{% endfor %} {# end of category loop #}
+}; // end of logging
+
+{# required only if recursion is defined #}
+{% if bind_options_recursion is defined and bind_options_recursion != 'no' %}
+// root zone
+zone "." IN {
+	type hint;
+	file "named.ca";
+};
+{% endif %}
+
+// root key
+include "/etc/named.root.key";
+
+// controls
+
+// using automatic config (rndc-confgen -a)
+// to generate and rdnc.key file read by rndc and named at startup
+// By default, the control channel is only listening on the loopback
+// address 127.0.0.1 and its IPv6 counterpart ::1 ,which is what we want anyway.
+
+// statistics channels
+statistics-channels {
+	inet 127.0.0.1;
+	inet ::1;
+};
+
+/*****************************
+	views and zones
+*****************************/
+{# loop to insert zones #}
+{% if bind_views is defined %}
+{% for view in bind_views %}
+
+{% if loop.length != 1 %}
+{#
+!!!!!!!!!!!!!!!!!!!!
+begin view statement
+!!!!!!!!!!!!!!!!!!!!
+#}
+{% if view.comment is defined %}
+// {{ view.comment }}
+{% endif %}
+view "{{ view.name }}" {
+{#
+	view options -> client filters
+#}
+{% if view.match_clients is defined %}
+	match-clients { {{ view.match_clients|join(';') }}; };
+{% endif %}
+{% if view.destinations is defined %}
+	destinations-clients { {{ view.destinations|join(';') }}; };
+{% endif %}
+{% if view.match_recursive_only is defined %}
+	match-recursive-only {{ view.match_recursive_only }};
+{% endif %}
+{% if view.allow_query is defined %}
+	allow-query { {{ view.allow_query|join(';') }};localhost; };
+{% endif %}
+{# view options -> recursion #}
+{% if view.recursion is defined and view.recursion != 'no' %}
+// root zone
+zone "." IN {
+type hint;
+file "named.ca";
+};
+{% endif %}
+
+	recursion {{ view.recursion|default('no') }};
+
+{% if view.allow_recursion is defined and view.recursion != 'no' %}
+	allow-recursion { {{ view.allow_recursion|join(';') }}; };
+{% endif %}
+{% if view.recursive_clients is defined and view.recursion != 'no' %}
+	recursive-clients {{ view.recursive_clients }};
+{% endif %}
+{% if view.forwarders is defined %}
+	forwarders { {{ view.forwarders|join(';') }}; };
+{% endif %}
+{#
+	!!!!!!!!!!!!!!!!!!!!!
+	end of view options
+	!!!!!!!!!!!!!!!!!!!!!
+#}
+{% endif %} {# end of view options-> loop.length != 1 #}
+{% if loop.length == 1 %}
+// using bind _default view
+{% endif %}
+
+{# always define the local zone #}
+// default local zone
+include "/etc/named.rfc1912.zones";
+
+{#
+	!!!!!!!!!!!!!!!!!!!!!
+	Insert forward zones
+	!!!!!!!!!!!!!!!!!!!!!
+#}
+{% if view.forwards is defined %}
+	////////////////////////
+	// forward zones
+	////////////////////////
+{% for z in view.forwards %}
+{#
+	To be print if:
+		* target is undefined
+		* target == bind_dns_type
+#}
+{% if z.target is undefined or z.target == bind_dns_type %}
+
+{# comments #}
+{% if z.comment is defined %}
+// {{ z.comment }}
+{% endif %}
+zone "{{ z.zone }}" IN {
+	type {{ z.type|default(bind_dns_type) }};
+{% if (bind_dns_type != 'slave' and z.type is undefined ) or (z.type is defined and z.type != 'slave' and z.type != 'forward') %}
+	file "forwards/{{ z.zone }}";
+{% elif z.type is undefined or (z.type is defined and z.type != 'forward') %}
+	masters { master-ips; };
+	file "slaves/{{ z.zone }}";
+{% endif %}
+{# allow-transfer #}
+{% if z.allow_query is defined %}
+	allow-query { {{ z.allow_query|join(';') }}; };
+{% endif %}
+{# allow-transfer #}
+{% if z.allow_transfer is defined and z.allow_transfer == none %}
+	allow-transfer { none; };
+{% elif z.allow_transfer is defined and z.allow_transfer != none %}
+	allow-transfer { {{ z.allow_transfer|join(';') }}; };
+{% endif %}
+{# allow-update #}
+{% if z.allow_update is defined and z.allow_update == none %}
+	allow-update { none; };
+{% elif z.allow_update is defined and z.allow_update != none %}
+	allow-update { {{ z.allow_update|join(';') }}; };
+{% endif %}
+{# notify #}
+{% if z.notify is defined and z.notify != 'yes' %}
+	{# possible other values are 'no' or 'explicit' #}
+	notify {{ z.notify }};
+{% endif %}
+{# also-notify #}
+{% if z.also_notify is defined %}
+	also-notify { {{ z.also_notify|join(';') }}; };
+{% endif %}
+{% if z.forwarders is defined %}
+	forwarders { {{ z.forwarders|join(';') }}; };
+{% endif %}
+}; {# end of a forward zone block #}
+{% endif %} {# target check #}
+
+{% endfor %} {# forwards zones loop #}
+{% endif %} {# view.forwards #}
+
+{% if view.reverses is defined %}
+	////////////////////////
+	// reverse zones
+	////////////////////////
+{% for z in view.reverses %}
+{#
+	To be print if:
+		* target is undefined
+		* target == bind_dns_type
+#}
+{% if z.target is undefined or z.target == bind_dns_type %}
+
+{# comments #}
+{% if z.comment is defined %}
+// {{ z.comment }}
+{% endif %}
+zone "{{ z.network|reverse_lookup_zone }}" IN {
+	type {{ z.type|default(bind_dns_type) }};
+{% if (bind_dns_type != 'slave' and z.type is undefined ) or (z.type is defined and z.type != 'slave' and z.type != 'forward') %}
+	file "reverses/{{ z.network|reverse_lookup_zone }}";
+{% elif z.type is undefined or (z.type is defined and z.type != 'forward') %}
+	file "slaves/{{ z.network|reverse_lookup_zone }}";
+	masters { "master-ips"; };
+{% endif %}
+{# allow-transfer #}
+{% if z.allow_transfer is defined and z.allow_transfer == none %}
+	allow-transfer { none; };
+{% elif z.allow_transfer is defined and z.allow_transfer != none %}
+	allow-transfer { {{ z.allow_transfer|join(';') }}; };
+{% endif %}
+{# allow-update #}
+{% if z.allow_update is defined and z.allow_update == none %}
+	allow-update { none; };
+{% elif z.allow_update is defined and z.allow_update != none %}
+	allow-update { {{ z.allow_update|join(';') }}; };
+{% endif %}
+{# notify #}
+{% if z.notify is defined and z.notify != 'yes' %}
+	{# possible other values are 'no' or 'explicit' #}
+	notify {{ z.notify }};
+{% endif %}
+{# also-notify #}
+{% if z.also_notify is defined %}
+	also-notify { {{ z.also_notify|join(';') }}; };
+{% endif %}
+{% if z.forwarders is defined %}
+	forwarders { {{ z.forwarders|join(';') }}; };
+{% endif %}
+}; {# end of a reverse zone block #}
+{% endif %} {# target check #}
+
+{% endfor %} {# reverses zones loop #}
+{% endif %} {# view.reverse #}
+
+{# add a closing comment on each view statement #}
+{% if loop.length != 1 %}
+}; // end of view {{ view.name }}
+{% endif %}
+
+{% endfor %}
+{# views loop #}
+{% endif %} {# bind_views #}

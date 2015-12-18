@@ -1,0 +1,8 @@
+  # ip, ip subnet or acl
+  # localhost and slaves defined in bind_groups
+  # are included by default
+bind_options_allow_query:
+    - outofclusterhost
+    - lan
+bind_options_allow_transfer:
+    - outofclusterhost
