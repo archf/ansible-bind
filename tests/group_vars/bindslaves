@@ -5,9 +5,11 @@ bind_options_allow_query:
   - 192.168.56.0/24
   - anotherlan
   - outofclusterhost
+
 bind_options_allow_transfer:
   - 192.168.56.0/24
   - outofclusterhost
+
 # recursion settings
 bind_options_recursion: 'yes'
 bind_options_recursive_clients: 1500
@@ -16,3 +18,5 @@ bind_options_recursive_clients: 1500
 bind_options_allow_recursion:
   - anotherlan
   - outofclusterhost
+  - 192.168.0.0/16
+# last subnet above is to test recursion from 192.168.0.0/16
