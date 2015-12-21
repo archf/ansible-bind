@@ -88,12 +88,17 @@
   delegate_to: localhost
   run_once: true
 
+  # Note: errors are ignored for when registering content of unexisting directory
+  # True if you build a dns cache cluster or if you have no reverse
+  # alternatively, I could test it before...
+
 - name: register local forwards directories containing zonefile RR
   command: find {{ bind_data_root}}/{{ group_names[0] }}/forwards/ -mindepth 1 -maxdepth 1 -type d
   register: bind_forward_zonedirs
   delegate_to: localhost
   run_once: true
   always_run: true
+  ignore_errors: true
 
 - name: register local reverses directories containing zonefile RR
   command: find {{ bind_data_root}}/{{ group_names[0] }}/reverses/ -mindepth 1 -maxdepth 1 -type d
@@ -101,6 +106,7 @@
   delegate_to: localhost
   run_once: true
   always_run: true
+  ignore_errors: true
 
 # *.soa files are copied to all nodes, but only authoritative zones that
 # included it will make use of it.
