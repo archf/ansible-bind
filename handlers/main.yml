@@ -3,5 +3,5 @@
 
 - name: reload bind
   service:
-    name: named
+    name: "{{ bind_service }}"
     state: reloaded

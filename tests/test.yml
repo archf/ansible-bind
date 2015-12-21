@@ -1,6 +1,5 @@
 ---
 - hosts: bind_cluster
   become: true
-
   roles:
     - bind

@@ -203,5 +203,5 @@
 # this ensure the bind service is started so that the bind reload doesn't
 # fail on the first reload.
 - name: start bind if not already started (to avoid issues with the reload handler)
-  service: name=named state=started enabled=yes
+  service: name={{ bind_service }} state=started enabled=yes
   when: bind_status.stdout != "active"
