@@ -18,12 +18,33 @@ The required filter_plugin to generate a reverse zone for could be embedded in
 ansible 2.0. Meanwhile, you will need a copy of the `filter_plugins` directory
 inside the `playbook_dir` or wherever you point it inside `ansible.cfg`
 
+NOTE:
+
 ## Role Variables
 
 Default variables:
 
 ```yaml
+bind_packages:
+  - bind.x86_64
+  - bind-utils.x86_64
 
+# do not update bind to latest unless explictly stated
+bind_pkg_state: installed
+
+# bind is not installed in a chroot and selinux is used as recommendend
+# force to true if needed
+bind_chroot: false
+bind_service: named
+
+# recursion is turned off
+bind_options_recursion: no
+
+# default logging channel provided in package
+bind_logging_channels:
+  - channel_name: default_debug
+    file: 'data/named.run'
+    severity: dynamic
 ```
 
 ## Dependencies
@@ -33,6 +54,24 @@ None.
 ## Example Playbook
 
 See the vagrant setup inside the test directory.
+
+A simple playbook may look like this
+
+```yaml
+- hosts: bind_cluster
+  become: true
+    roles:
+        - bind
+```
+
+See configuration example in tests/group_vars/*
+
+```bash
+tests/group_vars
+├── bind_cluster
+├── bindmasters
+└── bindslaves
+```
 
 Testing
 -------
@@ -65,7 +104,6 @@ PR welcome!
 
 ## Todo
 
-- make it work with bind chroot
-- add bind-chroot package installation
 - template named.soa
+- activate selinux when not running inside chroot
 - A python script to parse all forward zones and generate all the reverse RR from them

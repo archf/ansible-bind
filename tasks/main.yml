@@ -11,16 +11,46 @@
   yum:
     name: bind-chroot
     state: "{{ bind_pkg_state }}"
-  when: ansible_os_family == "Redhat" and bind_chroot
+  when: (ansible_os_family == "RedHat") and (bind_chroot)
+
+- name: make sure selinux is enabled
+  selinux: state=disabled
+  # when: not bind_chroot
+  # selinux: state=enforcing policy=targeted
+
+- name: set path to prepend to file destination, i.e. (rhel or centos) < 7
+  set_fact: bind_chroot_path='/var/named/chroot'
+  when: (bind_chroot) and (ansible_distribution_version < 7)
+
+- name: register directories to move inside chroot
+  shell: cd /var/named && find . -mindepth 1 -maxdepth 1
+  register: named_files
+  always_run: true
+  when: (bind_chroot) and (ansible_distribution_version < 7)
+
+- name: move required files and directories inside chroot
+  shell: cd /var/named && mv {{ item }} /var/named/chroot/var/named/
+  with_items: named_files.stdout_lines
+  when: (bind_chroot) and (ansible_distribution_version < 7) and (item != "./chroot")
+
+- name: register files inside chroot 'chroot/var/named' (required to maintain idempotency)
+  shell: cd /var/named/chroot/var/named && find . -mindepth 1 -maxdepth 1 -type f
+  register: named_files
+  always_run: true
+  when: (bind_chroot) and (ansible_distribution_version < 7)
+
+- name: adjust file permissions inside 'chroot/var/named/'
+  file:
+    dest: /var/named/chroot/var/named/{{ item }}
+    owner: named
+    group: named
+    mode: 0640
+  with_items: named_files.stdout_lines
+  when: (bind_chroot) and (ansible_distribution_version < 7)
 
 - name: create serial to update zones
   command: date +%y%m%d%S
   register: bind_zones_serial
-
-# - name: make sure selinux is enabled
-#   selinux: state=disabled
-#   # when: not bind_chroot
-#    selinux: state=enforcing policy=targeted
 
 # guess facts based on ip address configured on host
 - name: set bind_listen_on_ipv4 and bind_dns_type from machine IP address
@@ -34,7 +64,7 @@
 
 - name: create bind directory structure (forward, reverse and slave dir...)
   file:
-    path: "{{ bind_options_directory }}/{{ item.dir }}"
+    path: "{{ bind_chroot_path|default('') }}{{ bind_options_directory }}/{{ item.dir }}"
     owner: named
     group: named
     mode: '0760'
@@ -47,7 +77,7 @@
     - { dir: 'slaves', policy: 'named_cache_t' }
 
 - name: check if bind is running (systemctl is-active named)
-  command: systemctl is-active named
+  command: systemctl is-active {{ bind_service }}
   register: bind_status
   always_run: true
   ignore_errors: true
@@ -113,7 +143,7 @@
 - name: copy shared .soa files to named running directory if they exist
   copy:
     src: "{{ item }}"
-    dest: "{{ bind_options_directory|default('/var/named/') }}"
+    dest: "{{ bind_chroot_path|default('') }}{{ bind_options_directory|default('/var/named/') }}"
     owner: named
     group: named
     mode: "0640"
@@ -127,7 +157,7 @@
 - name: copy all forward directories (where included zonefiles live)
   copy:
     src: "{{ item }}"
-    dest: "{{ bind_options_directory }}/forwards/"
+    dest: "{{ bind_chroot_path|default('') }}{{ bind_options_directory }}/forwards/"
     directory_mode: "0770"
     owner: named
     group: named
@@ -139,7 +169,7 @@
 - name: copy forward zonefiles (when node is authoritative on zone)
   copy:
     src: "{{ bind_data_root }}/{{ group_names[0] }}/forwards/{{ item.1.zone }}"
-    dest: "{{ bind_options_directory }}/forwards/{{ item.1.zone }}"
+    dest: "{{  bind_chroot_path|default('') }}{{ bind_options_directory }}/forwards/{{ item.1.zone }}"
     owner: named
     group: named
     mode: "0640"
@@ -156,7 +186,7 @@
 - name: copy all reverses directories (where included zonefiles live)
   copy:
     src: "{{ item }}"
-    dest: "{{ bind_options_directory }}/reverses/"
+    dest: "{{ bind_chroot_path|default('') }}{{ bind_options_directory }}/reverses/"
     directory_mode: "0770"
     owner: named
     group: named
@@ -169,7 +199,7 @@
 - name: copy reverse zone files (when node is authoritative on zone)
   copy:
     src: "{{ bind_data_root }}/{{ group_names[0] }}/reverses/{{ item.1.network|reverse_lookup_zone }}"
-    dest: "{{ bind_options_directory }}/reverses/{{ item.1.network|reverse_lookup_zone }}"
+    dest: "{{ bind_chroot_path|default('') }}{{ bind_options_directory }}/reverses/{{ item.1.network|reverse_lookup_zone }}"
     owner: named
     group: named
     mode: "0640"
@@ -203,7 +233,6 @@
     mode: '0640'
     backup: yes
     setype: named_conf_t
-    # validate: 'named-checkconf -z %s'
   notify: reload bind
 
 # this ensure the bind service is started so that the bind reload doesn't

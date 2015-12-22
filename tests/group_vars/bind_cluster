@@ -1,8 +1,8 @@
 # default is not to run bind and a chroot and make use of selinux as
 # recommended in the bind documentation
 
-# bind_chroot: true
-# bind_service: named-chroot
+bind_chroot: true
+bind_service: named-chroot
 
 # 'masters' and 'slaves' special acl will be use to populate the:
 # address match-list used by
